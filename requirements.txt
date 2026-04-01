@@ -2,14 +2,21 @@
 # Install: pip install -r requirements.txt
 
 # Core RL environment
-gymnasium>=0.29.0
-numpy>=1.24.0
+# gymnasium>=0.29.0
+# numpy>=1.24.0
 
-# Deep Q-Network agent
-torch>=2.0.0
+# # Deep Q-Network agent
+# torch>=2.0.0
 
-# Gradio demo (Hugging Face Spaces)
-gradio>=4.0.0
+# # Gradio demo (Hugging Face Spaces)
+# gradio>=4.0.0
 
-# Plotting (for reward curves in the Gradio app)
-matplotlib>=3.7.0
+# # Plotting (for reward curves in the Gradio app)
+# matplotlib>=3.7.0
+
+
+numpy
+gradio
+matplotlib
+gymnasium
+torch --index-url https://download.pytorch.org/whl/cpu

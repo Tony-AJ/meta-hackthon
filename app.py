@@ -359,4 +359,4 @@ with gr.Blocks(theme=THEME, title="Cloud Resource Allocation – DevOps AI Agent
 
 
 if __name__ == "__main__":
-    demo.launch(show_error=True)
+    demo.launch(server_name="0.0.0.0", server_port=7860)
