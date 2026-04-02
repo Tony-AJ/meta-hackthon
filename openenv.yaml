@@ -1,0 +1,23 @@
+name: cloud-resource-allocation
+version: 1.0.0
+description: >
+  AI agent learns to manage cloud infrastructure resources
+  (CPU, Memory, Containers) under varying load patterns.
+  Simulates real-world Kubernetes autoscaling scenarios
+  including steady-state, diurnal traffic, and flash crowds.
+
+tasks:
+  - name: steady-load
+    difficulty: easy
+    description: Maintain stability under constant moderate load (0.3-0.5)
+
+  - name: diurnal-cycle
+    difficulty: medium
+    description: Handle predictable daily traffic patterns (sinusoidal 0.2-0.8)
+
+  - name: spike-resilience
+    difficulty: hard
+    description: Survive unpredictable flash-crowd spikes (random surges to 0.95)
+
+entrypoint: server/app.py
+port: 7860
