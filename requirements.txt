@@ -1,12 +1,15 @@
+# Cloud Resource Allocation – OpenEnv Environment
+# ================================================
+
 # OpenEnv core (server + client framework)
 openenv-core[core]>=0.2.1
 
 # Server dependencies
-fastapi>=0.100.0,<1.0.0
-uvicorn[standard]>=0.23.0,<1.0.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
 
 # Environment physics
-numpy>=1.24.0,<2.0.0
+numpy>=1.24.0
 
 # Inference script dependencies
-openai>=1.0.0,<2.0.0
+openai>=1.0.0
