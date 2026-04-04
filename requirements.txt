@@ -1,8 +1,5 @@
-# Cloud Resource Allocation – OpenEnv Environment
-# ================================================
-
 # OpenEnv core (server + client framework)
-openenv-core>=0.1.0
+openenv-core[core]>=0.2.1
 
 # Server dependencies
 fastapi>=0.100.0,<1.0.0
