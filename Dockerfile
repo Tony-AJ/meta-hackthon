@@ -29,8 +29,8 @@ USER appuser
 # Expose port (HF Spaces standard)
 EXPOSE 7860
 
-# Default mode: OpenEnv server
-ENV MODE=server
+# Default mode: Gradio demo (better for HF Space landing page)
+ENV MODE=demo
 
 # Entrypoint: switch between server and demo based on MODE
 CMD if [ "$MODE" = "demo" ]; then \
