@@ -3,18 +3,20 @@
 #   MODE=server  (default) → OpenEnv FastAPI server for HF Space
 #   MODE=demo              → Gradio interactive UI
 
-FROM python:3.10-slim
+FROM python:3.11
 
 WORKDIR /app
 
-# Install system dependencies needed by openenv-core (gradio, etc.)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies (v5)
+# Install dependencies (v6)
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && python -c "import openenv; print('openenv OK')"
 
 # Copy project files (respects .dockerignore)
 COPY . /app
