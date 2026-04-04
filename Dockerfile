@@ -1,4 +1,4 @@
-# ── Cloud Resource Allocation – OpenEnv Environment ──────────────────────────
+# ── Cloud Resource Allocation – OpenEnv Environment ──────────────────────
 # Single Dockerfile with MODE switch:
 #   MODE=server  (default) → OpenEnv FastAPI server for HF Space
 #   MODE=demo              → Gradio interactive UI
@@ -7,9 +7,12 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching)
+# Install dependencies (v2 - cache bust)
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && echo "=== Installed packages ===" \
+    && pip list | grep -i openenv \
+    && python -c "import openenv; print('openenv OK:', openenv.__file__)"
 
 # Copy project files (respects .dockerignore)
 COPY . /app
