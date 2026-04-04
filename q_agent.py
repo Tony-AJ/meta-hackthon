@@ -24,12 +24,19 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import logging
 import os
 import random
 from pathlib import Path
 from typing import Deque, NamedTuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 
 # ── optional torch import ───────────────────────────────────────────────────
 try:
@@ -39,7 +46,7 @@ try:
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
-    print("[WARNING] PyTorch not found. Install with:  pip install torch")
+    logger.warning("PyTorch not found. Install with:  pip install torch")
 
 from cloud_env import CloudResourceEnv
 
@@ -139,7 +146,6 @@ class DQNAgent:
         if seed is not None:
             torch.manual_seed(seed)
             random.seed(seed)
-            np.random.seed(seed)
 
         # Networks
         self.q_net     = QNetwork(obs_dim, n_actions, hidden).to(self.device)
@@ -246,17 +252,17 @@ class DQNAgent:
             },
         }
         torch.save(checkpoint, path)
-        print(f"[DQNAgent] Saved → {path}")
+        logger.info("DQNAgent saved → %s", path)
 
     def load(self, path: str | Path) -> None:
         path = Path(path)
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         self.q_net.load_state_dict(checkpoint["q_net_state"])
         self.target_net.load_state_dict(checkpoint["target_net_state"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state"])
         self._total_steps = checkpoint.get("total_steps", 0)
         self._epsilon     = checkpoint.get("epsilon", self.EPS_END)
-        print(f"[DQNAgent] Loaded ← {path}")
+        logger.info("DQNAgent loaded ← %s", path)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -394,10 +400,10 @@ if __name__ == "__main__":
     if args.train:
         history = train(episodes=args.episodes, save_path=args.save, seed=args.seed)
         rewards = history["episode_rewards"]
-        print(f"\nTraining complete. Final avg reward (last 50): {np.mean(rewards[-50:]):.2f}")
+        logger.info("Training complete. Final avg reward (last 50): %.2f", np.mean(rewards[-50:]))
 
     if args.eval:
         evaluate(load_path=args.load, episodes=args.episodes, seed=args.seed, render=not args.no_render)
 
     if not args.train and not args.eval:
-        print("Specify --train or --eval. Run with --help for usage.")
+        logger.info("Specify --train or --eval. Run with --help for usage.")

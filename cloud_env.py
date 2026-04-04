@@ -26,9 +26,12 @@ Reward  (float, per step):
 
 from __future__ import annotations
 
+import logging
 import math
 import numpy as np
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ── optional gymnasium integration ──────────────────────────────────────────
 try:
@@ -113,6 +116,20 @@ class CloudResourceEnv(_BASE):
     COST_PENALTY_RATE:  float =  0.05   # per container, per step
     SCALING_PENALTY:    float =  0.10   # penalty for each scale up/down action
 
+    # ── dynamics tuning constants ────────────────────────────────────────────
+    LOAD_BASE:          float =  0.50   # base-level periodic load centre
+    LOAD_AMPLITUDE:     float =  0.35   # how far load swings above/below base
+    LOAD_FREQUENCY:     float =  3.0    # full sinusoidal cycles per episode
+    LOAD_NOISE_STD:     float =  0.05   # Gaussian noise on load
+    CPU_NOISE_RANGE:    float =  0.03   # uniform noise half-width on CPU
+    MEM_NOISE_RANGE:    float =  0.02   # uniform noise half-width on MEM
+    CPU_PRESSURE_RATE:  float =  0.05   # how fast CPU rises with pressure
+    MEM_PRESSURE_RATE:  float =  0.04   # how fast MEM rises with pressure
+    CPU_ALLOC_RELIEF:   float =  0.10   # CPU reduction from Alloc CPU action
+    MEM_ALLOC_RELIEF:   float =  0.10   # MEM reduction from Alloc MEM action
+    SCALE_UP_RELIEF:    float =  0.05   # per-resource relief when scaling up
+    SCALE_DOWN_INCREASE: float = 0.08   # per-resource increase when scaling down
+
     # ── spaces ───────────────────────────────────────────────────────────────
     observation_space = _box(0.0, 1.0, 4)   # [cpu, mem, cont_norm, load]
     action_space      = _discrete(5)
@@ -176,17 +193,17 @@ class CloudResourceEnv(_BASE):
         if action == 0:   # Idle
             pass
         elif action == 1: # Allocate CPU   → relieve CPU pressure
-            self._cpu_used = max(0.0, self._cpu_used - 0.10)
+            self._cpu_used = max(0.0, self._cpu_used - self.CPU_ALLOC_RELIEF)
         elif action == 2: # Allocate Memory → relieve mem pressure
-            self._mem_used = max(0.0, self._mem_used - 0.10)
+            self._mem_used = max(0.0, self._mem_used - self.MEM_ALLOC_RELIEF)
         elif action == 3: # Scale Up (+1 container)
             self._containers = min(self.MAX_CONTAINERS, self._containers + 1)
-            self._cpu_used   = max(0.0, self._cpu_used - 0.05)
-            self._mem_used   = max(0.0, self._mem_used - 0.05)
+            self._cpu_used   = max(0.0, self._cpu_used - self.SCALE_UP_RELIEF)
+            self._mem_used   = max(0.0, self._mem_used - self.SCALE_UP_RELIEF)
         elif action == 4: # Scale Down / Kill (-1 container)
             self._containers = max(self.MIN_CONTAINERS, self._containers - 1)
-            self._cpu_used   = min(1.0, self._cpu_used + 0.08)
-            self._mem_used   = min(1.0, self._mem_used + 0.08)
+            self._cpu_used   = min(1.0, self._cpu_used + self.SCALE_DOWN_INCREASE)
+            self._mem_used   = min(1.0, self._mem_used + self.SCALE_DOWN_INCREASE)
 
         # ── Environment dynamics ─────────────────────────────────────────────
         self._update_dynamics()
@@ -239,8 +256,10 @@ class CloudResourceEnv(_BASE):
     def _update_dynamics(self) -> None:
         """Stochastic, load-dependent resource drift."""
         t        = self._step_count / self.MAX_STEPS
-        base     = 0.5 + 0.35 * math.sin(2 * math.pi * t * 3)  # periodic load
-        noise    = float(self._np_rng.normal(0, 0.05))
+        base     = self.LOAD_BASE + self.LOAD_AMPLITUDE * math.sin(
+            2 * math.pi * t * self.LOAD_FREQUENCY
+        )
+        noise    = float(self._np_rng.normal(0, self.LOAD_NOISE_STD))
         self._load = float(np.clip(base + noise, 0.0, 1.0))
 
         # Pressure per container (more containers → less individual pressure)
@@ -248,10 +267,16 @@ class CloudResourceEnv(_BASE):
         pressure        = float(np.clip(self._load / max(container_ratio, 0.05), 0.0, 1.0))
 
         self._cpu_used = float(np.clip(
-            self._cpu_used + self._np_rng.uniform(-0.03, 0.03) + 0.05 * pressure, 0.0, 1.0
+            self._cpu_used
+            + self._np_rng.uniform(-self.CPU_NOISE_RANGE, self.CPU_NOISE_RANGE)
+            + self.CPU_PRESSURE_RATE * pressure,
+            0.0, 1.0,
         ))
         self._mem_used = float(np.clip(
-            self._mem_used + self._np_rng.uniform(-0.02, 0.02) + 0.04 * pressure, 0.0, 1.0
+            self._mem_used
+            + self._np_rng.uniform(-self.MEM_NOISE_RANGE, self.MEM_NOISE_RANGE)
+            + self.MEM_PRESSURE_RATE * pressure,
+            0.0, 1.0,
         ))
 
     def _compute_reward(self, action: int) -> float:

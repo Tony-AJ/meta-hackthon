@@ -11,17 +11,27 @@ Three tabs:
 Deploy to Hugging Face Spaces (SDK: Gradio, app_file: app.py)
 """
 
+import logging
 import os
 import random
 from pathlib import Path
+from typing import Any
 
 import gradio as gr
 import matplotlib
+# Use non-interactive Agg backend — required for headless server / HF Spaces
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
 from cloud_env import CloudResourceEnv
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 
 # ── try to load a trained agent (optional) ───────────────────────────────────
 _AGENT = None
@@ -31,11 +41,11 @@ try:
     if _MODEL_PATH.exists():
         _AGENT = DQNAgent(obs_dim=4, n_actions=5)
         _AGENT.load(str(_MODEL_PATH))
-        print("[app] Trained DQN agent loaded.")
+        logger.info("Trained DQN agent loaded.")
     else:
-        print("[app] No trained model found – using random agent for demo.")
+        logger.warning("No trained model found – using random agent for demo.")
 except Exception as e:
-    print(f"[app] Could not load DQN agent: {e}")
+    logger.error("Could not load DQN agent: %s", e)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -80,27 +90,34 @@ def _state_table(info: dict, reward: float | None = None) -> str:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Tab 1 – Interactive simulation
+# Tab 1 – Interactive simulation (uses gr.State for per-session isolation)
 # ────────────────────────────────────────────────────────────────────────────
 
-_istate: dict = {}   # mutable session state (Gradio is stateless per call)
-
-
-def interactive_reset():
+def interactive_reset(
+    state: dict[str, Any],
+) -> tuple[str, str, str, str, dict[str, Any]]:
+    """Reset the environment and return initial display + updated session state."""
     env = CloudResourceEnv(seed=random.randint(0, 9999))
     obs, info = env.reset()
-    _istate.clear()
-    _istate.update({"env": env, "obs": obs, "total_reward": 0.0, "log": []})
+    state = {"env": env, "obs": obs, "total_reward": 0.0, "log": []}
     table = _state_table(info)
-    return table, "0.000", "—", "Episode reset ✅"
+    return table, "0.000", "—", "Episode reset ✅", state
 
 
-def interactive_step(manual_action: str):
-    if "env" not in _istate:
-        return "⚠️ Click **Reset Episode** first.", "—", "—", "Not started"
+def interactive_step(
+    manual_action: str,
+    state: dict[str, Any],
+) -> tuple[str, str, str, str, dict[str, Any]]:
+    """Execute one step and return updated display + session state."""
+    if not state or "env" not in state:
+        return (
+            "⚠️ Click **Reset Episode** first.",
+            "—", "—", "Not started",
+            state or {},
+        )
 
-    env   = _istate["env"]
-    obs   = _istate["obs"]
+    env = state["env"]
+    obs = state["obs"]
 
     # Action selection
     action_map = {name: idx for idx, name in ACTION_NAMES.items()}
@@ -111,29 +128,30 @@ def interactive_step(manual_action: str):
     chosen = ACTION_NAMES[action]
 
     obs, reward, terminated, truncated, info = env.step(action)
-    _istate["obs"]          = obs
-    _istate["total_reward"] += reward
+    state["obs"] = obs
+    state["total_reward"] += reward
     log_line = (
         f"Step {info['step']:>3} | {chosen:<14} | "
         f"rew={reward:+.3f} | "
         f"cpu={info['cpu_used']:.1%} mem={info['mem_used']:.1%} "
         f"cont={info['containers']:>2} load={info['load']:.1%}"
     )
-    _istate["log"].append(log_line)
+    state["log"].append(log_line)
 
-    table  = _state_table(info, reward)
-    total  = f"{_istate['total_reward']:.3f}"
+    table = _state_table(info, reward)
+    total = f"{state['total_reward']:.3f}"
     status = "🏁 Done" if (terminated or truncated) else "▶ Running"
-    log_text = "\n".join(_istate["log"][-20:])  # last 20 lines
+    log_text = "\n".join(state["log"][-20:])  # last 20 lines
 
-    return table, total, chosen, log_text
+    return table, total, chosen, log_text, state
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Tab 2 – Auto-run full episode + plots
 # ────────────────────────────────────────────────────────────────────────────
 
-def run_episode(seed_val: int, use_agent: bool):
+def run_episode(seed_val: int, use_agent: bool) -> tuple[plt.Figure, str]:
+    """Run a full episode and return (matplotlib figure, summary markdown)."""
     env = CloudResourceEnv(seed=int(seed_val))
     obs, _ = env.reset()
 
@@ -295,6 +313,9 @@ with gr.Blocks(theme=THEME, title="Cloud Resource Allocation – DevOps AI Agent
         elem_id="header",
     )
 
+    # ── Per-session state (thread-safe, no global mutable dict) ──────────
+    session_state = gr.State(value={})
+
     with gr.Tabs():
 
         # ── Tab 1: Interactive ───────────────────────────────────────────────
@@ -325,12 +346,13 @@ with gr.Blocks(theme=THEME, title="Cloud Resource Allocation – DevOps AI Agent
 
             reset_btn.click(
                 fn=interactive_reset,
-                outputs=[state_md, total_rew, last_act, log_box],
+                inputs=[session_state],
+                outputs=[state_md, total_rew, last_act, log_box, session_state],
             )
             step_btn.click(
                 fn=interactive_step,
-                inputs=[action_dd],
-                outputs=[state_md, total_rew, last_act, log_box],
+                inputs=[action_dd, session_state],
+                outputs=[state_md, total_rew, last_act, log_box, session_state],
             )
 
         # ── Tab 2: Auto-run ──────────────────────────────────────────────────

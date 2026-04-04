@@ -7,11 +7,17 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy project files
+# Install dependencies first (better layer caching)
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy project files (respects .dockerignore)
 COPY . /app
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Create non-root user for security
+RUN useradd --create-home appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 # Expose port (HF Spaces standard)
 EXPOSE 7860

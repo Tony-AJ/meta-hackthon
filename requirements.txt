@@ -2,22 +2,26 @@
 # ================================================
 
 # OpenEnv core (server + client framework)
-openenv-core
+openenv-core>=0.1.0
 
 # Server dependencies
-fastapi
-uvicorn[standard]
+fastapi>=0.100.0,<1.0.0
+uvicorn[standard]>=0.23.0,<1.0.0
 
 # Environment physics
-numpy
+numpy>=1.24.0,<2.0.0
 
 # Gradio demo (used when MODE=demo)
-gradio>=4.0.0
-matplotlib>=3.7.0
+gradio>=4.0.0,<5.0.0
+matplotlib>=3.7.0,<4.0.0
 
 # DQN agent (optional, for Gradio demo mode)
 # Using CPU-only torch to keep image small
-torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
 
 # Inference script dependencies
-openai
+openai>=1.0.0,<2.0.0
+
+# Testing (dev only)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0

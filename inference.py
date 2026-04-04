@@ -9,6 +9,8 @@ MANDATORY:
   - Reads API_BASE_URL, MODEL_NAME, HF_TOKEN from environment variables.
   - Emits structured [START], [STEP], [END] stdout logs.
 
+Falls back to the trained DQN agent when no LLM API key is available.
+
 Usage:
     export HF_TOKEN=hf_xxx
     export IMAGE_NAME=cloud-resource-env:latest
@@ -16,19 +18,26 @@ Usage:
 """
 
 import asyncio
+import logging
 import os
 import sys
 import textwrap
+from pathlib import Path
 from typing import List, Optional
 
-from openai import OpenAI
-
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from client import CloudEnv
 from models import CloudAction, CloudObservation
 from tasks import TASK_CONFIGS, grade_episode
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -73,6 +82,38 @@ SYSTEM_PROMPT = textwrap.dedent("""\
 """).strip()
 
 
+# ── DQN fallback agent ──────────────────────────────────────────────────────
+
+_DQN_AGENT = None
+
+def _load_dqn_fallback() -> bool:
+    """Try to load the trained DQN agent as a fallback. Returns True on success."""
+    global _DQN_AGENT
+    try:
+        from q_agent import DQNAgent
+        model_path = Path("models/dqn_cloud.pth")
+        if model_path.exists():
+            _DQN_AGENT = DQNAgent(obs_dim=4, n_actions=5)
+            _DQN_AGENT.load(str(model_path))
+            logger.info("DQN fallback agent loaded from %s", model_path)
+            return True
+        else:
+            logger.warning("No trained DQN model found at %s", model_path)
+    except Exception as exc:
+        logger.warning("Could not load DQN fallback: %s", exc)
+    return False
+
+
+def _dqn_action(obs: CloudObservation) -> int:
+    """Get action from the DQN agent, or default to Idle."""
+    if _DQN_AGENT is None:
+        return 0
+    import numpy as np
+    state = np.array([obs.cpu_used, obs.mem_used, obs.containers / 20.0, obs.load],
+                     dtype=np.float32)
+    return _DQN_AGENT.select_action(state, greedy=True)
+
+
 # ── Logging helpers ──────────────────────────────────────────────────────────
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -114,7 +155,7 @@ def build_user_prompt(obs: CloudObservation, last_reward: float) -> str:
 
 
 def get_action_from_llm(
-    client: OpenAI,
+    client: "OpenAI",
     obs: CloudObservation,
     last_reward: float,
 ) -> int:
@@ -147,7 +188,7 @@ def get_action_from_llm(
         return 0  # default to Idle if unparseable
 
     except Exception as exc:
-        print(f"[DEBUG] LLM request failed: {exc}", flush=True)
+        logger.error("LLM request failed: %s", exc)
         return 0  # safe fallback
 
 
@@ -164,17 +205,25 @@ ACTION_NAMES = {
 
 # ── Main inference loop ─────────────────────────────────────────────────────
 
-async def run_task(task_name: str, env: CloudEnv, llm_client: OpenAI) -> dict:
+async def run_task(
+    task_name: str,
+    env: CloudEnv,
+    llm_client: Optional["OpenAI"],
+    use_dqn: bool = False,
+) -> dict:
     """Run a single task and return results."""
     rewards: List[float] = []
     steps_taken = 0
     success = False
     score = 0.0
 
+    # Decide agent label
+    agent_label = "DQN" if use_dqn else MODEL_NAME
+
     # Set task via env var before reset
     os.environ["TASK_NAME"] = task_name
 
-    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_name, env=BENCHMARK, model=agent_label)
 
     try:
         result = await env.reset()
@@ -185,8 +234,11 @@ async def run_task(task_name: str, env: CloudEnv, llm_client: OpenAI) -> dict:
             if result.done:
                 break
 
-            # Get action from LLM
-            action_id = get_action_from_llm(llm_client, obs, last_reward)
+            # Get action
+            if use_dqn:
+                action_id = _dqn_action(obs)
+            else:
+                action_id = get_action_from_llm(llm_client, obs, last_reward)
 
             # Execute action
             result = await env.step(CloudAction(action_id=action_id))
@@ -219,7 +271,7 @@ async def run_task(task_name: str, env: CloudEnv, llm_client: OpenAI) -> dict:
         success = score > 0.1
 
     except Exception as exc:
-        print(f"[DEBUG] Task {task_name} error: {exc}", flush=True)
+        logger.error("Task %s error: %s", task_name, exc)
 
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
@@ -232,9 +284,58 @@ async def run_task(task_name: str, env: CloudEnv, llm_client: OpenAI) -> dict:
     }
 
 
+# ── Environment variable validation ─────────────────────────────────────────
+
+def validate_config() -> tuple[bool, bool]:
+    """
+    Validate required environment variables.
+    Returns (has_llm, has_dqn) indicating which agents are available.
+    """
+    missing = []
+
+    if not IMAGE_NAME:
+        missing.append("IMAGE_NAME")
+
+    has_llm = bool(API_KEY)
+    has_dqn = _load_dqn_fallback()
+
+    if not has_llm and not has_dqn:
+        logger.error(
+            "No agent available! Set HF_TOKEN/API_KEY for LLM agent, "
+            "or provide models/dqn_cloud.pth for DQN fallback."
+        )
+        sys.exit(1)
+
+    if not has_llm:
+        logger.warning(
+            "HF_TOKEN/API_KEY not set — using trained DQN agent as fallback. "
+            "Set HF_TOKEN for LLM-based inference."
+        )
+
+    if missing:
+        logger.error(
+            "Missing required environment variables: %s. "
+            "See .env.example for details.",
+            ", ".join(missing),
+        )
+        sys.exit(1)
+
+    return has_llm, has_dqn
+
+
 async def main() -> None:
     """Run all 3 tasks and report results."""
-    llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    has_llm, has_dqn = validate_config()
+
+    # Only create LLM client if API key is available
+    llm_client = None
+    use_dqn = False
+    if has_llm:
+        from openai import OpenAI
+        llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    else:
+        use_dqn = True
+        logger.info("Using DQN agent for inference (no LLM API key).")
 
     # Connect to environment via Docker image
     env = await CloudEnv.from_docker_image(IMAGE_NAME)
@@ -243,7 +344,7 @@ async def main() -> None:
 
     try:
         for task_name in TASK_CONFIGS:
-            result = await run_task(task_name, env, llm_client)
+            result = await run_task(task_name, env, llm_client, use_dqn=use_dqn)
             results.append(result)
             print("", flush=True)  # blank line between tasks
     finally:

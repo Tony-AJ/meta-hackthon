@@ -10,12 +10,14 @@ Subclasses ``Environment`` from ``openenv.core.env_server`` and implements:
     state (property)         → CloudState
 
 The Observation base class has built-in `done`, `reward`, `metadata` fields.
-Physics / dynamics are ported from the original ``cloud_env.py``.
+
+IMPORTANT: Physics constants are imported from ``cloud_env.CloudResourceEnv``
+to avoid drift between the training env and the serving env.
 """
 
 from __future__ import annotations
 
-import math
+import logging
 import os
 import uuid
 from typing import Any, Optional
@@ -26,27 +28,34 @@ from openenv.core.env_server import Environment
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from cloud_env import CloudResourceEnv
 from models import CloudAction, CloudObservation, CloudState
 from tasks import TASK_CONFIGS, DEFAULT_TASK, generate_load, grade_episode
 
+logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────────────────
-# Constants  (mirrored from cloud_env.py)
+# Constants — imported from the canonical source (cloud_env.py) to prevent
+# drift between training and serving environments.
 # ────────────────────────────────────────────────────────────────────────────
 
-MAX_CONTAINERS   = 20
-MIN_CONTAINERS   = 1
+MAX_CONTAINERS       = CloudResourceEnv.MAX_CONTAINERS
+MIN_CONTAINERS       = CloudResourceEnv.MIN_CONTAINERS
+OVERLOAD_THRESHOLD   = CloudResourceEnv.OVERLOAD_THRESHOLD
+WASTE_THRESHOLD      = CloudResourceEnv.WASTE_THRESHOLD
+OVERLOAD_GRACE_STEPS = CloudResourceEnv.OVERLOAD_GRACE_STEPS
 
-OVERLOAD_THRESHOLD   = 0.90
-WASTE_THRESHOLD      = 0.20
-OVERLOAD_GRACE_STEPS = 5
+EFFICIENCY_BONUS     = CloudResourceEnv.EFFICIENCY_BONUS
+OVERLOAD_PENALTY     = CloudResourceEnv.OVERLOAD_PENALTY
+WASTE_PENALTY_VAL    = CloudResourceEnv.WASTE_PENALTY
+IDLE_STEP_PENALTY    = CloudResourceEnv.IDLE_STEP_PENALTY
+COST_PENALTY_RATE    = CloudResourceEnv.COST_PENALTY_RATE
+SCALING_PENALTY      = CloudResourceEnv.SCALING_PENALTY
 
-EFFICIENCY_BONUS   =  1.0
-OVERLOAD_PENALTY   = -3.0
-WASTE_PENALTY_VAL  = -0.5
-IDLE_STEP_PENALTY  = -0.1
-COST_PENALTY_RATE  =  0.05
-SCALING_PENALTY    =  0.10
+CPU_ALLOC_RELIEF     = CloudResourceEnv.CPU_ALLOC_RELIEF
+MEM_ALLOC_RELIEF     = CloudResourceEnv.MEM_ALLOC_RELIEF
+SCALE_UP_RELIEF      = CloudResourceEnv.SCALE_UP_RELIEF
+SCALE_DOWN_INCREASE  = CloudResourceEnv.SCALE_DOWN_INCREASE
 
 ACTION_NAMES = {
     0: "Idle",
@@ -127,6 +136,11 @@ class CloudResourceEnvironment(Environment[CloudAction, CloudObservation, CloudS
         self._steps_wasted = 0
         self._done = False
 
+        logger.info(
+            "Episode reset: task=%s, difficulty=%s, seed=%d",
+            task_name, self._task_cfg.difficulty, actual_seed,
+        )
+
         return CloudObservation(
             cpu_used=round(self._cpu_used, 4),
             mem_used=round(self._mem_used, 4),
@@ -148,6 +162,11 @@ class CloudResourceEnvironment(Environment[CloudAction, CloudObservation, CloudS
         """Execute one action and return the resulting observation."""
         act = action.action_id
         if act not in ACTION_NAMES:
+            logger.warning(
+                "Invalid action_id=%r received; defaulting to Idle (0). "
+                "Valid actions: %s",
+                act, list(ACTION_NAMES.keys()),
+            )
             act = 0  # default to Idle for invalid actions
 
         self._step_count += 1
@@ -156,17 +175,17 @@ class CloudResourceEnvironment(Environment[CloudAction, CloudObservation, CloudS
         if act == 0:    # Idle
             pass
         elif act == 1:  # Alloc CPU
-            self._cpu_used = max(0.0, self._cpu_used - 0.10)
+            self._cpu_used = max(0.0, self._cpu_used - CPU_ALLOC_RELIEF)
         elif act == 2:  # Alloc MEM
-            self._mem_used = max(0.0, self._mem_used - 0.10)
+            self._mem_used = max(0.0, self._mem_used - MEM_ALLOC_RELIEF)
         elif act == 3:  # Scale Up
             self._containers = min(MAX_CONTAINERS, self._containers + 1)
-            self._cpu_used   = max(0.0, self._cpu_used - 0.05)
-            self._mem_used   = max(0.0, self._mem_used - 0.05)
+            self._cpu_used   = max(0.0, self._cpu_used - SCALE_UP_RELIEF)
+            self._mem_used   = max(0.0, self._mem_used - SCALE_UP_RELIEF)
         elif act == 4:  # Scale Down
             self._containers = max(MIN_CONTAINERS, self._containers - 1)
-            self._cpu_used   = min(1.0, self._cpu_used + 0.08)
-            self._mem_used   = min(1.0, self._mem_used + 0.08)
+            self._cpu_used   = min(1.0, self._cpu_used + SCALE_DOWN_INCREASE)
+            self._mem_used   = min(1.0, self._mem_used + SCALE_DOWN_INCREASE)
 
         # ── Environment dynamics ─────────────────────────────────────────
         self._update_dynamics()
@@ -215,6 +234,10 @@ class CloudResourceEnvironment(Environment[CloudAction, CloudObservation, CloudS
                 "steps_wasted":     self._steps_wasted,
             })
             status = f"done | score={score:.3f}"
+            logger.info(
+                "Episode done: steps=%d, score=%.3f, reward=%.2f",
+                self._step_count, score, self._total_reward,
+            )
 
         return CloudObservation(
             cpu_used=round(self._cpu_used, 4),
