@@ -20,3 +20,13 @@ from server.cloud_environment import CloudResourceEnvironment
 
 # create_fastapi_app expects the Environment CLASS, not an instance
 app = create_fastapi_app(CloudResourceEnvironment, CloudAction, CloudObservation)
+
+
+def main():
+    """Entry point for the OpenEnv server."""
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+
+if __name__ == "__main__":
+    main()
