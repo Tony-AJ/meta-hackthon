@@ -22,6 +22,22 @@ from server.cloud_environment import CloudResourceEnvironment
 app = create_fastapi_app(CloudResourceEnvironment, CloudAction, CloudObservation)
 
 
+@app.get("/")
+def read_root():
+    """Welcome page with environment health check."""
+    return {
+        "status": "online",
+        "environment": "Cloud Resource Allocation",
+        "mode": "API Server",
+        "endpoints": {
+            "reset": "/reset",
+            "step": "/step",
+            "state": "/state",
+            "metadata": "/metadata"
+        }
+    }
+
+
 def main():
     """Entry point for the OpenEnv server."""
     import uvicorn
