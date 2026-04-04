@@ -7,12 +7,10 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install dependencies (v2 - cache bust)
+# Install dependencies (v3 - lean server build)
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && echo "=== Installed packages ===" \
-    && pip list | grep -i openenv \
-    && python -c "import openenv; print('openenv OK:', openenv.__file__)"
+    && python -c "from openenv.core.env_server import create_fastapi_app; print('openenv OK')"
 
 # Copy project files (respects .dockerignore)
 COPY . /app
