@@ -18,22 +18,31 @@ from openenv.core.env_server import create_fastapi_app
 from models import CloudAction, CloudObservation
 from server.cloud_environment import CloudResourceEnvironment
 
+import gradio as gr
+from app import demo
+
 # create_fastapi_app expects the Environment CLASS, not an instance
 app = create_fastapi_app(CloudResourceEnvironment, CloudAction, CloudObservation)
 
+# Mount the beautiful Gradio UI onto the FastAPI app so both are available on port 7860
+# Mounting at "/" ensures it is the landing page for the Space.
+# FastAPI's internal routes (like /reset) will take precedence.
+app = gr.mount_gradio_app(app, demo, path="/")
 
-@app.get("/")
-def read_root():
-    """Welcome page with environment health check."""
+
+@app.get("/health")
+def health_check():
+    """Environment health check."""
     return {
         "status": "online",
         "environment": "Cloud Resource Allocation",
-        "mode": "API Server",
+        "mode": "Unified Server (API + UI)",
         "endpoints": {
             "reset": "/reset",
             "step": "/step",
             "state": "/state",
-            "metadata": "/metadata"
+            "metadata": "/metadata",
+            "ui": "/"
         }
     }
 

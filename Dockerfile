@@ -29,12 +29,9 @@ USER appuser
 # Expose port (HF Spaces standard)
 EXPOSE 7860
 
-# Default mode: Gradio demo (better for HF Space landing page)
-ENV MODE=demo
+# Default mode: Unified Server (API + Gradio UI)
+ENV MODE=server
 
-# Entrypoint: switch between server and demo based on MODE
-CMD if [ "$MODE" = "demo" ]; then \
-      python app.py; \
-    else \
-      uvicorn server.app:app --host 0.0.0.0 --port 7860; \
-    fi
+# Entrypoint: Always run the unified server.
+# The Gradio UI is now mounted inside the FastAPI app.
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860"]
