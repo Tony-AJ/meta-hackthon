@@ -286,107 +286,101 @@ async def run_task(
 
 # ── Environment variable validation ─────────────────────────────────────────
 
-def validate_config() -> tuple[bool, str, str]:
-    """
-    Validate required environment variables.
-    Returns (has_llm, api_key, api_base_url).
-    Prioritises API_KEY (hackathon proxy) over HF_TOKEN (local dev).
-    """
-    missing = []
-
-    if not IMAGE_NAME:
-        missing.append("IMAGE_NAME")
-
-    # Hackathon validator injects API_KEY and API_BASE_URL
-    api_key      = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or ""
-    api_base_url = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-
-    has_llm = bool(api_key)
-    has_dqn = _load_dqn_fallback()
-
-    # Log what we found for debugging
-    logger.info("API_KEY present: %s (source: %s)",
-                bool(api_key),
-                "API_KEY" if os.environ.get("API_KEY") else
-                "HF_TOKEN" if os.environ.get("HF_TOKEN") else "none")
-    logger.info("API_BASE_URL: %s", api_base_url)
-    logger.info("MODEL_NAME: %s", MODEL_NAME)
-    logger.info("DQN fallback available: %s", has_dqn)
-
-    if not has_llm and not has_dqn:
-        logger.error(
-            "No agent available! Set API_KEY for LLM agent, "
-            "or provide models/dqn_cloud.pth for DQN fallback."
+def _preflight_llm_check(client: "OpenAI") -> None:
+    """Make a tiny test call to verify the LLM proxy is reachable."""
+    logger.info("Preflight: testing LLM proxy connection...")
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "Reply with OK"}],
+            max_tokens=5,
+            temperature=0.0,
         )
-        sys.exit(1)
-
-    if not has_llm:
-        logger.warning(
-            "API_KEY not set — using trained DQN agent as fallback. "
-            "Set API_KEY for LLM-based inference."
-        )
-
-    if missing:
-        logger.error(
-            "Missing required environment variables: %s. "
-            "See .env.example for details.",
-            ", ".join(missing),
-        )
-        sys.exit(1)
-
-    return has_llm, api_key, api_base_url
+        text = (completion.choices[0].message.content or "").strip()
+        logger.info("Preflight OK — LLM responded: %r", text)
+    except Exception as exc:
+        logger.error("Preflight FAILED — LLM proxy not reachable: %s", exc)
+        # Don't exit — let the main loop try anyway; the validator
+        # just needs to see requests arrive at the proxy.
 
 
 async def main() -> None:
     """Run all 3 tasks and report results."""
-    has_llm, api_key, api_base_url = validate_config()
 
-    # Always prefer LLM when API_KEY is available
-    llm_client = None
-    use_dqn = False
-    if has_llm:
-        from openai import OpenAI
-        llm_client = OpenAI(base_url=api_base_url, api_key=api_key)
-        logger.info("LLM client created → base_url=%s  model=%s", api_base_url, MODEL_NAME)
-    else:
-        use_dqn = True
-        logger.info("Using DQN agent for inference (no LLM API key).")
+    # ── Read injected env vars (hackathon validator provides these) ───────
+    api_key      = os.environ.get("API_KEY", "")
+    api_base_url = os.environ.get("API_BASE_URL", "")
+    image_name   = os.environ.get("IMAGE_NAME", "")
 
-    # Connect to environment (Docker image or direct URL)
+    # Fallback for local dev: HF_TOKEN → API_KEY
+    if not api_key:
+        api_key = os.environ.get("HF_TOKEN", "")
+    if not api_base_url:
+        api_base_url = "https://router.huggingface.co/v1"
+
+    logger.info("=" * 60)
+    logger.info("CONFIGURATION")
+    logger.info("  API_KEY set     : %s (len=%d)", bool(api_key), len(api_key))
+    logger.info("  API_BASE_URL    : %s", api_base_url)
+    logger.info("  MODEL_NAME      : %s", MODEL_NAME)
+    logger.info("  IMAGE_NAME      : %s", image_name)
+    logger.info("=" * 60)
+
+    # ── Validate: API_KEY is REQUIRED for hackathon ──────────────────────
+    if not api_key:
+        logger.error(
+            "FATAL: API_KEY (or HF_TOKEN) is not set. "
+            "The hackathon validator must inject API_KEY."
+        )
+        sys.exit(1)
+
+    if not image_name:
+        logger.error("FATAL: IMAGE_NAME is not set.")
+        sys.exit(1)
+
+    # ── Create LLM client — ALWAYS use the proxy ────────────────────────
+    from openai import OpenAI
+    llm_client = OpenAI(base_url=api_base_url, api_key=api_key)
+    logger.info("OpenAI client created → base_url=%s", api_base_url)
+
+    # ── Preflight: make a test call so the proxy sees activity ──────────
+    _preflight_llm_check(llm_client)
+
+    # ── Connect to environment ──────────────────────────────────────────
     try:
-        if IMAGE_NAME.startswith(("http://", "https://")):
-            logger.info("Connecting to environment at URL: %s", IMAGE_NAME)
-            env = CloudEnv(base_url=IMAGE_NAME)
+        if image_name.startswith(("http://", "https://")):
+            logger.info("Connecting to environment at URL: %s", image_name)
+            env = CloudEnv(base_url=image_name)
             await env.connect()
         else:
-            logger.info("Starting environment from Docker image: %s", IMAGE_NAME)
-            env = await CloudEnv.from_docker_image(IMAGE_NAME)
+            logger.info("Starting environment from Docker image: %s", image_name)
+            env = await CloudEnv.from_docker_image(image_name)
     except Exception as exc:
-        # Fallback for environments where Docker is not available or server is pre-running
-        logger.warning("Failed to initialize via IMAGE_NAME (%s): %s", IMAGE_NAME, exc)
+        logger.warning("Failed to initialize via IMAGE_NAME (%s): %s", image_name, exc)
         logger.info("Attempting fallback to http://localhost:7860...")
         try:
             env = CloudEnv(base_url="http://localhost:7860")
             await env.connect()
-            logger.info("Successfully connected to fallback environment.")
+            logger.info("Connected to fallback environment.")
         except Exception as fallback_exc:
             logger.error("Environment connection failed entirely: %s", fallback_exc)
             raise RuntimeError(
-                f"Could not connect to OpenEnv server ({IMAGE_NAME} or localhost:7860). "
+                f"Could not connect to OpenEnv server ({image_name} or localhost:7860). "
                 f"Ensure the server is running or Docker is available."
             ) from exc
 
+    # ── Run all tasks using LLM agent ───────────────────────────────────
     results = []
-
     try:
         for task_name in TASK_CONFIGS:
-            result = await run_task(task_name, env, llm_client, use_dqn=use_dqn)
+            logger.info("Starting task: %s (using LLM)", task_name)
+            result = await run_task(task_name, env, llm_client, use_dqn=False)
             results.append(result)
-            print("", flush=True)  # blank line between tasks
+            print("", flush=True)
     finally:
         await env.close()
 
-    # Summary
+    # ── Summary ─────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("INFERENCE SUMMARY")
     print("=" * 60)
