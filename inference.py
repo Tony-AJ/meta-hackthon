@@ -40,10 +40,10 @@ logging.basicConfig(
 )
 
 # ── Configuration ────────────────────────────────────────────────────────────
+# NOTE: API_KEY and API_BASE_URL are read fresh in main() to ensure we pick up
+#       the hackathon validator's injected environment variables.
 
 IMAGE_NAME    = os.getenv("IMAGE_NAME")
-API_KEY       = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL  = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME    = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
 BENCHMARK     = "cloud-resource-allocation"
@@ -286,30 +286,44 @@ async def run_task(
 
 # ── Environment variable validation ─────────────────────────────────────────
 
-def validate_config() -> tuple[bool, bool]:
+def validate_config() -> tuple[bool, str, str]:
     """
     Validate required environment variables.
-    Returns (has_llm, has_dqn) indicating which agents are available.
+    Returns (has_llm, api_key, api_base_url).
+    Prioritises API_KEY (hackathon proxy) over HF_TOKEN (local dev).
     """
     missing = []
 
     if not IMAGE_NAME:
         missing.append("IMAGE_NAME")
 
-    has_llm = bool(API_KEY)
+    # Hackathon validator injects API_KEY and API_BASE_URL
+    api_key      = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or ""
+    api_base_url = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+
+    has_llm = bool(api_key)
     has_dqn = _load_dqn_fallback()
+
+    # Log what we found for debugging
+    logger.info("API_KEY present: %s (source: %s)",
+                bool(api_key),
+                "API_KEY" if os.environ.get("API_KEY") else
+                "HF_TOKEN" if os.environ.get("HF_TOKEN") else "none")
+    logger.info("API_BASE_URL: %s", api_base_url)
+    logger.info("MODEL_NAME: %s", MODEL_NAME)
+    logger.info("DQN fallback available: %s", has_dqn)
 
     if not has_llm and not has_dqn:
         logger.error(
-            "No agent available! Set HF_TOKEN/API_KEY for LLM agent, "
+            "No agent available! Set API_KEY for LLM agent, "
             "or provide models/dqn_cloud.pth for DQN fallback."
         )
         sys.exit(1)
 
     if not has_llm:
         logger.warning(
-            "HF_TOKEN/API_KEY not set — using trained DQN agent as fallback. "
-            "Set HF_TOKEN for LLM-based inference."
+            "API_KEY not set — using trained DQN agent as fallback. "
+            "Set API_KEY for LLM-based inference."
         )
 
     if missing:
@@ -320,19 +334,20 @@ def validate_config() -> tuple[bool, bool]:
         )
         sys.exit(1)
 
-    return has_llm, has_dqn
+    return has_llm, api_key, api_base_url
 
 
 async def main() -> None:
     """Run all 3 tasks and report results."""
-    has_llm, has_dqn = validate_config()
+    has_llm, api_key, api_base_url = validate_config()
 
-    # Only create LLM client if API key is available
+    # Always prefer LLM when API_KEY is available
     llm_client = None
     use_dqn = False
     if has_llm:
         from openai import OpenAI
-        llm_client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        llm_client = OpenAI(base_url=api_base_url, api_key=api_key)
+        logger.info("LLM client created → base_url=%s  model=%s", api_base_url, MODEL_NAME)
     else:
         use_dqn = True
         logger.info("Using DQN agent for inference (no LLM API key).")
