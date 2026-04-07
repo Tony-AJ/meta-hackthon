@@ -3,6 +3,7 @@
 #   MODE=server  (default) → OpenEnv FastAPI server for HF Space
 #   MODE=demo              → Gradio interactive UI
 
+
 FROM public.ecr.aws/docker/library/python:3.11-slim
 
 WORKDIR /app
