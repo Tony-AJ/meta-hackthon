@@ -147,4 +147,5 @@ def grade_episode(task_name: str, trajectory: dict) -> float:
     waste_penalty = waste_ratio * 0.3
 
     score = base_score - waste_penalty
-    return max(0.0, min(1.0, score))
+    # Clamp to strict (0, 1) — hackathon validator rejects 0.0 and 1.0
+    return max(0.01, min(0.99, score))
