@@ -337,8 +337,29 @@ async def main() -> None:
         use_dqn = True
         logger.info("Using DQN agent for inference (no LLM API key).")
 
-    # Connect to environment via Docker image
-    env = await CloudEnv.from_docker_image(IMAGE_NAME)
+    # Connect to environment (Docker image or direct URL)
+    try:
+        if IMAGE_NAME.startswith(("http://", "https://")):
+            logger.info("Connecting to environment at URL: %s", IMAGE_NAME)
+            env = CloudEnv(base_url=IMAGE_NAME)
+            await env.connect()
+        else:
+            logger.info("Starting environment from Docker image: %s", IMAGE_NAME)
+            env = await CloudEnv.from_docker_image(IMAGE_NAME)
+    except Exception as exc:
+        # Fallback for environments where Docker is not available or server is pre-running
+        logger.warning("Failed to initialize via IMAGE_NAME (%s): %s", IMAGE_NAME, exc)
+        logger.info("Attempting fallback to http://localhost:7860...")
+        try:
+            env = CloudEnv(base_url="http://localhost:7860")
+            await env.connect()
+            logger.info("Successfully connected to fallback environment.")
+        except Exception as fallback_exc:
+            logger.error("Environment connection failed entirely: %s", fallback_exc)
+            raise RuntimeError(
+                f"Could not connect to OpenEnv server ({IMAGE_NAME} or localhost:7860). "
+                f"Ensure the server is running or Docker is available."
+            ) from exc
 
     results = []
 
