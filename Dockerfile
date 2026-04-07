@@ -28,6 +28,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Copy project files (respects .dockerignore)
 COPY . /app
 
+
 # Create non-root user for security
 RUN useradd --create-home appuser \
     && chown -R appuser:appuser /app
