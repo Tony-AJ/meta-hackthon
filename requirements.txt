@@ -15,4 +15,5 @@ matplotlib>=3.7.0
 
 # Inference script dependencies
 openai>=1.0.0
-torch>=2.0.0
+# torch>=2.0.0
+# NOTE: torch is installed separately in Dockerfile (CPU-only variant)

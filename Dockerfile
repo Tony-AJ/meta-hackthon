@@ -3,16 +3,23 @@
 #   MODE=server  (default) → OpenEnv FastAPI server for HF Space
 #   MODE=demo              → Gradio interactive UI
 
-FROM python:3.11
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # Install system dependencies
+# slim image needs font packages for matplotlib (Agg backend) and git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    fontconfig \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies (v6)
+# Install PyTorch CPU-only first (avoids pulling ~2 GB CUDA bundle)
+RUN pip install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies (v7)
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
