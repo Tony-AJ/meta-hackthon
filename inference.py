@@ -4,7 +4,6 @@ inference.py
 Baseline inference script for the Cloud Resource Allocation OpenEnv environment.
 
 
-
 MANDATORY:
   - Must be named ``inference.py`` and placed in the root directory.
   - Uses OpenAI Client for all LLM calls.
