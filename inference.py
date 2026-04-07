@@ -216,7 +216,7 @@ async def run_task(
     rewards: List[float] = []
     steps_taken = 0
     success = False
-    score = 0.0
+    score = 0.01  # default must be in (0, 1) — validator rejects 0.0
 
     # Decide agent label
     agent_label = "DQN" if use_dqn else MODEL_NAME
@@ -274,6 +274,8 @@ async def run_task(
     except Exception as exc:
         logger.error("Task %s error: %s", task_name, exc)
 
+    # Clamp score to strict (0, 1) before reporting
+    score = max(0.01, min(0.99, score))
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
     return {
