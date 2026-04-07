@@ -11,7 +11,8 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from openenv.core import EnvClient, StepResult
+from openenv.core import EnvClient
+from openenv.core.client_types import StepResult
 from models import CloudAction, CloudObservation, CloudState
 
 
