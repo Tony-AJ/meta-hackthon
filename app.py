@@ -234,55 +234,118 @@ def run_episode(seed_val: int, use_agent: bool) -> tuple[plt.Figure, str]:
 # ────────────────────────────────────────────────────────────────────────────
 
 ABOUT_TEXT = """
-## ☁️ Cloud Resource Allocation – DevOps AI Agent
+## ☁️ Cloud Resource Allocation — DevOps AI Agent
 
-An RL agent that learns to allocate cloud resources to minimize **cost**, **latency**, and **overload** — analogous to Kubernetes scheduling.
+> **An OpenEnv-compliant reinforcement learning environment where AI agents learn to manage cloud infrastructure resources (CPU, Memory, Containers) under varying load patterns — simulating real-world Kubernetes autoscaling at scale.**
+
+**Built for the Meta × Scaler AI Hackathon 2026**
 
 ---
 
-### 🧠 State Space  (`obs_dim = 4`, all normalised 0–1)
-| Index | Feature           | Meaning                       |
-|-------|-------------------|-------------------------------|
-| 0     | `cpu_used`        | Fraction of CPU consumed      |
-| 1     | `mem_used`        | Fraction of Memory consumed   |
-| 2     | `containers_norm` | Number of running containers  |
-| 3     | `request_load`    | Incoming request load         |
+### 🌍 Real-World Mapping
+
+This simulation directly maps to production Kubernetes and cloud infrastructure:
+
+| Simulation | Real-World Equivalent |
+|---|---|
+| CPU utilisation | VM / pod CPU usage |
+| Memory utilisation | Container memory usage |
+| Containers (1–20) | Kubernetes pods / VM Scale Set instances |
+| Load (0.0–1.0) | Requests per second (normalised) |
+| Scale Up / Down | Horizontal Pod Autoscaler (HPA) actions |
+| Overload penalty (>90%) | SLA violation / latency spike |
+| Waste penalty (<20%) | Over-provisioned cloud spend |
+
+---
+
+### 🧠 Observation Space  (`obs_dim = 4`, all normalised 0–1)
+
+| Index | Feature | Range | Description |
+|---|---|---|---|
+| 0 | `cpu_used` | 0.0–1.0 | Fraction of total CPU consumed |
+| 1 | `mem_used` | 0.0–1.0 | Fraction of total memory consumed |
+| 2 | `containers` | 1–20 | Number of running containers/pods |
+| 3 | `load` | 0.0–1.0 | Incoming request load (normalised RPS) |
 
 ---
 
 ### ⚙️ Action Space  (`Discrete(5)`)
-| Action | Name        | Effect                          |
-|--------|-------------|---------------------------------|
-| 0      | Idle        | Do nothing                      |
-| 1      | Alloc CPU   | Relieve CPU pressure (−10%)     |
-| 2      | Alloc MEM   | Relieve MEM pressure (−10%)     |
-| 3      | Scale UP    | +1 container (distributes load) |
-| 4      | Scale DOWN  | −1 container (saves cost)       |
+
+| Action | Name | Effect | Real-World Analogy |
+|---|---|---|---|
+| 0 | **Idle** | Do nothing | No autoscaler intervention |
+| 1 | **Alloc CPU** | Relieve CPU pressure (−10%) | Vertical scaling / CPU limit increase |
+| 2 | **Alloc MEM** | Relieve MEM pressure (−10%) | Memory limit increase |
+| 3 | **Scale UP** | +1 container; CPU/MEM relief (−5%) | HPA scale-up event |
+| 4 | **Scale DOWN** | −1 container; CPU/MEM increase (+8%) | HPA scale-down to save cost |
 
 ---
 
 ### 🏅 Reward Function
-| Condition                          | Signal                        |
-|------------------------------------|-------------------------------|
-| Balanced efficiency               | `+efficiency_bonus`            |
-| CPU or MEM > 90%                  | `−3.0 overload_penalty`        |
-| Resources idle & low load         | `−0.5 waste_penalty`           |
-| Container cost (per container)    | `−0.05 × containers`           |
-| Scaling action (erratic scaling)  | `−0.10 scaling_penalty`        |
-| Idle action                       | `−0.10 idle_penalty`           |
+
+| Component | Condition | Signal | Purpose |
+|---|---|---|---|
+| **Efficiency bonus** | CPU ≈ load, balanced utilisation | `+1.0 × efficiency` | Reward right-sizing |
+| **Overload penalty** | CPU or MEM > 90% | `−3.0` | Punish SLA violations |
+| **Waste penalty** | CPU & MEM < 20%, load < 30% | `−0.5` | Punish over-provisioning |
+| **Container cost** | Per container, every step | `−0.05 × containers` | Incentivise frugality |
+| **Scaling penalty** | Scale Up or Scale Down action | `−0.10` | Discourage erratic scaling |
+| **Idle penalty** | Idle action chosen | `−0.10` | Discourage permanent passivity |
+
+**Efficiency formula:** `efficiency = 1.0 − |cpu_used − load| − |mem_used − load| × 0.5`
 
 ---
 
-### 🤖 Agent
-**Deep Q-Network (DQN)** with:
-- 2-hidden-layer MLP (4→128→128→5)
-- Experience replay buffer (20k transitions)
+### 🛑 Termination Conditions
+
+| Type | Condition |
+|---|---|
+| **Normal** | `step_count >= episode_length` (task-specific) |
+| **Overload** | 5 consecutive steps with CPU or MEM > 90% |
+| **Catastrophic** | CPU ≥ 100% AND MEM ≥ 100% AND containers ≤ 1 |
+
+---
+
+### 📋 Task Difficulties (Easy → Hard)
+
+| Task | Difficulty | Load Pattern | Steps |
+|---|---|---|---|
+| `steady-load` | 🟢 Easy | Constant 0.3–0.5, Gaussian noise (σ=0.03) | 100 |
+| `diurnal-cycle` | 🟡 Medium | Sinusoidal 0.2–0.8 (daily traffic) | 150 |
+| `spike-resilience` | 🔴 Hard | Random spikes to 0.95 (15% chance/step) | 200 |
+
+**Grading:** `score = (1.0 − overload_ratio) − (waste_ratio × 0.3)` clamped to [0.0, 1.0]
+
+---
+
+### 🤖 Dual-Agent Architecture
+
+#### 1. Deep Q-Network (DQN)
+- 2-hidden-layer MLP (4 → 128 → 128 → 5)
+- Experience replay buffer (20,000 transitions)
 - Target network (hard update every 200 steps)
-- Epsilon-greedy exploration (ε: 1.0 → 0.05)
+- ε-greedy exploration (1.0 → 0.05, linear decay over 5,000 steps)
+- Gradient clipping (max norm 10.0)
+
+#### 2. LLM Agent (Qwen 72B)
+- Uses **Qwen/Qwen2.5-72B-Instruct** via HF Inference API
+- Natural-language reasoning about cluster state each step
+- Responds with a single action digit (0–4)
+- Falls back to keyword matching, then DQN, on parse failure
+
+**Automatic fallback:** If no `HF_TOKEN` is set, the system uses the trained DQN agent.
 
 ---
 
-> Built for the **Meta Hackathon** · Industry-level DevOps + AI combination
+### 🐳 Deployment
+
+- **Unified Server:** FastAPI (OpenEnv API) + Gradio UI on port 7860
+- **Docker Ready:** Single Dockerfile, deploy as HF Space
+- **OpenEnv Compliant:** Standard `POST /reset` · `POST /step` · `GET /state` API
+
+---
+
+> ⚡ Built with [OpenEnv](https://github.com/meta-pytorch/OpenEnv) · **Meta × Scaler AI Hackathon 2026**
 """
 
 
